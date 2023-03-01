@@ -352,6 +352,27 @@ impl<'a> JoinPlanner<'a> {
 
                 (JoinExecutor::NestedLoop, expr)
             }
+            // TODO
+            // SELECT * FROM Foo JOIN Bar ON (Foo.id = Bar.id AND Foo.age > 10) 
+            // SELECT * FROM Foo JOIN Bar ON Foo.id = Bar.id WHERE Foo.age > 10 
+            // Insuquery 일단 query 들어가는
+            // SELECT * FROM Foo JOIN Bar .. ON IN (subquery) 
+            Expr::InSubquery { expr, subquery, negated } => {
+                let context = Context::concat(current_context, inner_context);
+                let context = Context::concat(context, outer_context);
+
+                let subquery = self.query(context, *subquery);
+                let expr = Some(Expr::InSubquery{expr: expr, subquery: Box::new(subquery), negated: negated});
+                (JoinExecutor::NestedLoop, expr)
+            }
+            Expr::Exists { subquery, negated } => {
+                let context = Context::concat(current_context, inner_context);
+                let context = Context::concat(context, outer_context);
+
+                let subquery = self.query(context, *subquery);
+                let expr = Some(Expr::Exists { subquery: Box::new(subquery), negated: negated });
+                (JoinExecutor::NestedLoop, expr)
+            }
             _ => (JoinExecutor::NestedLoop, Some(expr)),
         }
     }
@@ -527,6 +548,20 @@ mod tests {
             .join("PlayerItem")
             .on("(SELECT * FROM Player u2)");
         test!(actual, expected, "subquery in join_constraint:\n{sql}");
+
+
+        // hmm.. add here?? 
+        let sql = "
+            SELECT * FROM Player 
+            JOIN PlayerItem ON (1 IN SELECT * FROM Player u2)
+        ";
+        let actual = plan_join(&storage, sql);
+        let expected = table("Player")
+            .select()
+            .join("PlayerItem")
+            .on("(1 IN SELECT * FROM Player u2");
+        test!(actual, expected, "hmmmmmm");
+
     }
 
     #[test]
@@ -852,5 +887,16 @@ mod tests {
                 .or_else("col3"),
         );
         test!(actual, expected, "case expr:\n{sql}");
+
+        // TODO add test case here ...(?)
+        let sql = format!(
+            "
+            SELECT * FROM Player 
+            WHERE 1 IN {subquery_sql}  
+            "
+        );
+        let actual = plan_join(&storage, &sql);
+        let expected = table("Player").select().filter(num(1).in_list(subquery_node()));
+        test!(actual, expected, "insubquery.. ");
     }
 }
